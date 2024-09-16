@@ -1,9 +1,20 @@
-﻿using DevFreela.API.Entities;
-using DevFreela.API.Models;
-using DevFreela.API.Persistence;
+﻿using DevFreela.Core.Entities;
+using DevFreela.Application.Models;
+using DevFreela.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using DevFreela.Application.Services;
+using MediatR;
+using DevFreela.Application.Querys.GetAllProjects;
+using DevFreela.Application.Querys.GetProjectById;
+using DevFreela.Application.Comands.InsertProject;
+using DevFreela.Application.Comands.UpdateProject;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
+using DevFreela.Application.Comands.DeleteProject;
+using DevFreela.Application.Comands.InsertComment;
+using DevFreela.Application.Comands.StartProject;
+using DevFreela.Application.Comands.CompleteProject;
 
 namespace DevFreela.API.Controllers
 {
@@ -11,141 +22,109 @@ namespace DevFreela.API.Controllers
   [Route("api/projects")]
   public class ProjectsController : ControllerBase
   {
-       private readonly DevFreelaDBContext _db;
-       public ProjectsController(DevFreelaDBContext db)
+    private readonly IProjectService _service;
+    private readonly IMediator _mediator;
+       public ProjectsController(IProjectService service, IMediator mediator)
         {
-           _db = db;
+          _service = service;
+          _mediator = mediator;
         }
     
 
     //GET api/projects?search=crm
     [HttpGet]
-    public IActionResult Get(string search = "")
+    public async Task<IActionResult> Get(string search = "")
     {
-      var project = _db.Projects
-        .Include(p => p.Client)
-        .Include(p => p.Freelancer)
-        .Where(p => !p.IsDeleted).ToList();
-
-      var model = project.Select(ProjectItemViewModel.FromEntity).ToList();
-      return Ok(model);
+     // var result = _service.GetAll();
+      var query = new GetAllProjectsQuery();
+      var result = await _mediator.Send(query);
+      return Ok(result);
     }
 
     //api/projects/599
     [HttpGet("{id}")]
-    public IActionResult GetById(int id)
+    public async Task<IActionResult> GetById(int id)
     {
-      var project = _db.Projects
-        .Include(p => p.Client)
-        .Include(p => p.Freelancer)
-        .Include(p => p.Comments)
-        .SingleOrDefault(p => p.Id == id);
-       
+      var query = new GetProjectByIdQuery(id);
+      var result = await _mediator.Send(query);
+      
+      if (!result.IsSuccess)
+      {
+        return BadRequest(result.Message);
+      }
 
-      var model = ProjectViewModel.FromEntity(project);
-
-      return Ok(model);
+      return Ok(result);
     }
 
     [HttpPost]
-    public IActionResult Post([FromBody] CreateProjectModel createProject)
+    public async Task<IActionResult> Post(InsertProjectCommand command)
     {
-     var project = createProject.ToEntity();
-      _db.Projects.Add(project);
-      _db.SaveChanges();
-      return CreatedAtAction(nameof(GetById), new {id=createProject.Id}, createProject);
+      var result = await _mediator.Send(command);
+      if (!result.IsSuccess)
+      {
+        return BadRequest(result.Message);
+      }
+      return CreatedAtAction(nameof(GetById), new {id=result.Data}, command);
     }
 
     // api/projects/2
     [HttpPut("{id}")]
-    public IActionResult Put(int id, [FromBody] UpdateProjectModel updateProject)
+    public async Task<IActionResult> Put(int id, [FromBody] UpdateProjectCommand command)
     {
-      var project = _db.Projects
-        .AsNoTracking().SingleOrDefault(p => p.Id == id);
-      if(project == null)
+      var result = await _mediator.Send(command);
+      if (!result.IsSuccess)
       {
-        return NotFound();
+        return BadRequest(result.Message);
       }
-      
-      project.Update(updateProject.Title, updateProject.Description, updateProject.TotalCost);
-
-      _db.Projects.Update(project);
-      _db.SaveChanges();
       return NoContent();
     }
 
     // api/projects/3
     [HttpDelete("{id}")]
-    public IActionResult Delete(int id)
+    public async Task<IActionResult> Delete(int id)
     {
-      var project = _db.Projects
-        .AsNoTracking().SingleOrDefault(p => p.Id == id);
-      if (project == null)
+      var result = await _mediator.Send(new DeleteProjectCommand(id));
+      if (!result.IsSuccess)
       {
-        return NotFound();
+        return BadRequest(result.Message);
       }
-
-      project.SetAsDeleted();
-      _db.Projects.Update(project);
-      _db.SaveChanges();
-      // Buscar, se não existir/ retorna NOtFound
-      //Remover
       return NoContent();
     }
 
     //api/projects/1/comments POST
     [HttpPost("{id}/comments")]
-    public IActionResult PostComment(int id, [FromBody] CreateCommentModel createComment)
+    public async Task<IActionResult> PostComment(int id, InsertCommentCommand command)
     {
-      var project = _db.Projects
-        .AsNoTracking().SingleOrDefault(p => p.Id == id);
-      if (project == null)
+      var result = await _mediator.Send(command);
+      if (!result.IsSuccess)
       {
-        return NotFound();
+        return BadRequest(result.Message);
       }
-      var comment = new ProjectComment(createComment.Comment, createComment.IdProject, createComment.IdUser); 
-
-      _db.ProjectComments.Add(comment);
-      _db.SaveChanges();
-
       return NoContent();
-      //return BadRequest()
-      //return CreatedAtAction(nameof(GetById), new { id = createComment.Id }, createComment);
     }
 
     //api/projects/1/start PUT
     [HttpPut("{id}/start")]
-    public IActionResult Start(int id)
+    public async Task<IActionResult> Start(int id)
     {
 
-      var project = _db.Projects
-        .AsNoTracking().SingleOrDefault(p => p.Id == id);
-      if (project == null)
+      var result = await _mediator.Send(new StartProjectCommand(id));
+      if (!result.IsSuccess)
       {
-        return NotFound();
+        return BadRequest(result.Message);
       }
-      project.Start();
-      _db.Projects.Update(project);
-      _db.SaveChanges();
-
       return NoContent();
     }
 
     //api/projects/1/finish PUT
     [HttpPut("{id}/finish")]
-    public IActionResult Finish(int id)
+    public async Task<IActionResult> Finish(int id)
     {
-      var project = _db.Projects
-        .AsNoTracking().SingleOrDefault(p => p.Id == id);
-      if (project == null)
+      var result = await _mediator.Send(new CompleteProjectCommand(id));
+      if (!result.IsSuccess)
       {
-        return NotFound();
+        return BadRequest(result.Message);
       }
-
-      project.Complete();
-      _db.Projects.Update(project);
-      _db.SaveChanges();
-
       return NoContent();
     }
         
